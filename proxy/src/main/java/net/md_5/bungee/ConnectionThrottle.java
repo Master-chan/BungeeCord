@@ -1,16 +1,24 @@
 package net.md_5.bungee;
 
+import gnu.trove.map.TObjectLongMap;
+import gnu.trove.map.hash.TObjectLongHashMap;
+
 import java.net.InetAddress;
-import java.util.HashMap;
-import java.util.Map;
+
 import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
 public class ConnectionThrottle
 {
 
-    private final Map<InetAddress, Long> throttle = new HashMap<>();
+    //private final Map<InetAddress, Long> throttle = new HashMap<>();
+	private final TObjectLongMap<InetAddress> throttle = new TObjectLongHashMap<>();
     private final int throttleTime;
+    
+    public void clean()
+    {
+    	throttle.clear();
+    }
 
     public void unthrottle(InetAddress address)
     {

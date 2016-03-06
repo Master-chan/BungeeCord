@@ -8,6 +8,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import com.google.gson.GsonBuilder;
+
 import net.md_5.bungee.api.Favicon;
 import net.md_5.bungee.api.ServerPing;
 import net.md_5.bungee.api.Title;
@@ -15,16 +16,22 @@ import net.md_5.bungee.api.chat.TranslatableComponent;
 import net.md_5.bungee.chat.TextComponentSerializer;
 import net.md_5.bungee.chat.TranslatableComponentSerializer;
 import net.md_5.bungee.module.ModuleManager;
+
 import com.google.common.io.ByteStreams;
+
 import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.chat.ComponentSerializer;
 import net.md_5.bungee.log.BungeeLogger;
 import net.md_5.bungee.scheduler.BungeeScheduler;
+
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.gson.Gson;
+
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.channel.AdaptiveRecvByteBufAllocator;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelException;
 import io.netty.channel.ChannelFuture;
@@ -33,6 +40,7 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.ResourceLeakDetector;
 import net.md_5.bungee.conf.Configuration;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -56,6 +64,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
 import jline.UnsupportedTerminal;
 import jline.console.ConsoleReader;
 import jline.internal.Log;
@@ -84,6 +93,7 @@ import net.md_5.bungee.protocol.packet.Chat;
 import net.md_5.bungee.protocol.packet.PluginMessage;
 import net.md_5.bungee.query.RemoteQuery;
 import net.md_5.bungee.util.CaseInsensitiveMap;
+
 import org.fusesource.jansi.AnsiConsole;
 
 /**
@@ -105,7 +115,8 @@ public class BungeeCord extends ProxyServer
      * Localization bundle.
      */
     public ResourceBundle bundle;
-    public EventLoopGroup eventLoops;
+    public EventLoopGroup bossLoopGroup;
+    public EventLoopGroup workerLoopGroup;
     /**
      * locations.yml save thread.
      */
@@ -239,7 +250,11 @@ public class BungeeCord extends ProxyServer
             ResourceLeakDetector.setLevel( ResourceLeakDetector.Level.DISABLED ); // Eats performance
         }
 
-        eventLoops = PipelineUtils.newEventLoopGroup( 0, new ThreadFactoryBuilder().setNameFormat( "Netty IO Thread #%1$d" ).build() );
+        int bossGroupCount = Integer.getInteger("nio.bossgroups", 1);
+        int workerGroupCount = Integer.getInteger("nio.workergroups", 4);
+        
+        bossLoopGroup = PipelineUtils.newEventLoopGroup(bossGroupCount, new ThreadFactoryBuilder().setNameFormat( "Netty Boss IO Thread #%1$d" ).build());
+        workerLoopGroup = PipelineUtils.newEventLoopGroup(workerGroupCount, new ThreadFactoryBuilder().setNameFormat( "Netty Worker IO Thread #%1$d" ).build() );
 
         File moduleDirectory = new File( "modules" );
         moduleManager.load( this, moduleDirectory );
@@ -267,6 +282,7 @@ public class BungeeCord extends ProxyServer
             @Override
             public void run()
             {
+            	connectionThrottle.clean();
                 if ( getReconnectHandler() != null )
                 {
                     getReconnectHandler().save();
@@ -298,9 +314,11 @@ public class BungeeCord extends ProxyServer
             new ServerBootstrap()
                     .channel( PipelineUtils.getServerChannel() )
                     .option( ChannelOption.SO_REUSEADDR, true ) // TODO: Move this elsewhere!
+                    .option( ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT )
+                    .option( ChannelOption.RCVBUF_ALLOCATOR, new AdaptiveRecvByteBufAllocator(32, 256, 65535) )
                     .childAttr( PipelineUtils.LISTENER, info )
                     .childHandler( PipelineUtils.SERVER_CHILD )
-                    .group( eventLoops )
+                    .group( bossLoopGroup, workerLoopGroup )
                     .localAddress( info.getHost() )
                     .bind().addListener( listener );
 
@@ -321,7 +339,7 @@ public class BungeeCord extends ProxyServer
                         }
                     }
                 };
-                new RemoteQuery( this, info ).start( PipelineUtils.getDatagramChannel(), new InetSocketAddress( info.getHost().getAddress(), info.getQueryPort() ), eventLoops, bindListener );
+                new RemoteQuery( this, info ).start( PipelineUtils.getDatagramChannel(), new InetSocketAddress( info.getHost().getAddress(), info.getQueryPort() ), workerLoopGroup, bindListener );
             }
         }
     }
@@ -377,10 +395,12 @@ public class BungeeCord extends ProxyServer
                 }
 
                 getLogger().info( "Closing IO threads" );
-                eventLoops.shutdownGracefully();
+                bossLoopGroup.shutdownGracefully();
+                workerLoopGroup.shutdownGracefully();
                 try
                 {
-                    eventLoops.awaitTermination( Long.MAX_VALUE, TimeUnit.NANOSECONDS );
+                	bossLoopGroup.awaitTermination( Long.MAX_VALUE, TimeUnit.NANOSECONDS );
+                    workerLoopGroup.awaitTermination( Long.MAX_VALUE, TimeUnit.NANOSECONDS );
                 } catch ( InterruptedException ex )
                 {
                 }

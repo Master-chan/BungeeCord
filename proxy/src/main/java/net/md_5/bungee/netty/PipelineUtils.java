@@ -41,9 +41,9 @@ import net.md_5.bungee.protocol.Varint21LengthFieldPrepender;
 public class PipelineUtils
 {
 
-    public static final AttributeKey<ListenerInfo> LISTENER = new AttributeKey<>( "ListerInfo" );
-    public static final AttributeKey<UserConnection> USER = new AttributeKey<>( "User" );
-    public static final AttributeKey<BungeeServerInfo> TARGET = new AttributeKey<>( "Target" );
+    public static final AttributeKey<ListenerInfo> LISTENER = AttributeKey.valueOf( "ListerInfo" );
+    public static final AttributeKey<UserConnection> USER = AttributeKey.valueOf( "User" );
+    public static final AttributeKey<BungeeServerInfo> TARGET = AttributeKey.valueOf( "Target" );
     public static final ChannelInitializer<Channel> SERVER_CHILD = new ChannelInitializer<Channel>()
     {
         @Override
@@ -128,7 +128,7 @@ public class PipelineUtils
             {
                 // IP_TOS is not supported (Windows XP / Windows Server 2003)
             }
-            ch.config().setAllocator( PooledByteBufAllocator.DEFAULT );
+            //ch.config().setAllocator( PooledByteBufAllocator.DEFAULT );
 
             ch.pipeline().addLast( TIMEOUT_HANDLER, new ReadTimeoutHandler( BungeeCord.getInstance().config.getTimeout(), TimeUnit.MILLISECONDS ) );
             ch.pipeline().addLast( FRAME_DECODER, new Varint21FrameDecoder() );
